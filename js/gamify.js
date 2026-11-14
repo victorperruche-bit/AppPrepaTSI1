@@ -49,7 +49,7 @@ const Gamify = (() => {
     trackDaily(amount);
     const after = levelFromXp(s.xp).level;
     s.activityLog.unshift({ t: Date.now(), amount, reason });
-    if (s.activityLog.length > 60) s.activityLog.length = 60;
+    if (s.activityLog.length > 200) s.activityLog.length = 200;
     Store.save();
     if (after > before) {
       App.toast(`🎉 Niveau ${after + 1} atteint : ${LEVEL_NAMES[Math.min(after, LEVEL_NAMES.length - 1)]} !`);
@@ -95,6 +95,20 @@ const Gamify = (() => {
 
   function touchStreakDaily() { touchStreak(); }
 
+  // XP des 7 derniers jours (type Duolingo : rend la régularité visible)
+  function weeklyXp() {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const key = d.toISOString().slice(0, 10);
+      const xp = Store.state.activityLog
+        .filter((l) => new Date(l.t).toISOString().slice(0, 10) === key)
+        .reduce((s, l) => s + l.amount, 0);
+      days.push({ key, label: ["dim", "lun", "mar", "mer", "jeu", "ven", "sam"][d.getDay()], xp });
+    }
+    return days;
+  }
+
   function checkBadges() {
     const s = Store.state;
     const newly = BADGES.filter((b) => !s.badges.includes(b.id) && b.check(s));
@@ -106,5 +120,5 @@ const Gamify = (() => {
     return newly;
   }
 
-  return { levelFromXp, touchStreak, touchStreakDaily, addXp, checkBadges, BADGES, today, dailyProgress, weakestSubject };
+  return { levelFromXp, touchStreak, touchStreakDaily, addXp, checkBadges, BADGES, today, dailyProgress, weakestSubject, weeklyXp };
 })();

@@ -1,4 +1,4 @@
-const CACHE = "prepahub-v2";
+const CACHE = "prepahub-v3";
 const ASSETS = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const ASSETS = [
   "./js/srs.js",
   "./js/gamify.js",
   "./js/quiz.js",
+  "./js/exam.js",
   "./js/flashcards.js",
   "./js/mastery.js",
   "./js/focus.js",

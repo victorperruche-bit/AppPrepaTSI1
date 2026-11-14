@@ -1,6 +1,6 @@
 // app.js — Rendu de l'interface (SPA vanilla, léger et rapide partout)
 const App = (() => {
-  let view = "home";       // home | subject | quiz | flashcards | photos | photo | kholle | focus | progress | settings
+  let view = "home";       // home | subject | quiz | flashcards | exam | photos | photo | kholle | focus | search | progress | settings
   let currentSubject = null;
   let currentPhoto = null;
   let photosCache = null;
@@ -52,6 +52,8 @@ const App = (() => {
     else if (view === "photo") main.append(photoView(currentPhoto));
     else if (view === "kholle") main.append(kholleView());
     else if (view === "flashcards") main.append(flashcardsView());
+    else if (view === "exam") main.append(examView());
+    else if (view === "search") main.append(searchView());
     else if (view === "focus") main.append(focusView());
     else if (view === "progress") main.append(progressView());
     else if (view === "settings") main.append(settingsView());
@@ -90,9 +92,40 @@ const App = (() => {
     const wrap = el(`<div></div>`);
     const lvl = Gamify.levelFromXp(Store.state.xp);
 
+    // Onboarding première utilisation (type Duolingo : 30 secondes pour bien démarrer)
+    if (!Store.state.profile.onboarded) {
+      const ob = el(`
+        <div class="card">
+          <h1>👋 Bienvenue sur PrépaHub !</h1>
+          <p class="muted">30 secondes pour configurer ton espace de révision.</p>
+          <label class="field-label">Ton prénom</label>
+          <input type="text" id="ob-name" placeholder="Ton prénom">
+          <label class="field-label">Ton objectif quotidien</label>
+          <select id="ob-goal">
+            <option value="30">Tranquille — 30 XP/jour</option>
+            <option value="60" selected>Régulier — 60 XP/jour</option>
+            <option value="100">Ambitieux — 100 XP/jour</option>
+            <option value="150">Khûle — 150 XP/jour</option>
+          </select>
+          <button class="btn success" style="margin-top:0.9rem" id="ob-done">C'est parti ! 🚀</button>
+        </div>`);
+      ob.querySelector("#ob-done").onclick = () => {
+        const p = Store.state.profile;
+        p.name = ob.querySelector("#ob-name").value.trim() || "champion";
+        p.dailyGoal = parseInt(ob.querySelector("#ob-goal").value, 10);
+        p.onboarded = true;
+        Store.save();
+        Gamify.addXp(10, "Bienvenue");
+        toast(`Bienvenue ${p.name} ! Objectif : ${p.dailyGoal} XP/jour. +10 XP de départ 🎁`);
+        render();
+      };
+      wrap.append(ob);
+      return wrap;
+    }
+
     wrap.append(el(`
       <div class="card">
-        <h1>Bonjour 👋</h1>
+        <h1>Bonjour ${Store.state.profile.name || "👋"} ${Store.state.profile.name ? "👋" : ""}</h1>
         <p class="muted">Ta centrale de révision prépa TSI. Ajoute des photos de cours, révise avec les quiz, garde tes points d'intention.</p>
         <div class="stat-row" style="margin-top:0.8rem">
           <div class="stat-box"><div class="val">${Store.state.xp}</div><div class="label">XP total</div></div>
@@ -149,12 +182,16 @@ const App = (() => {
         <p class="muted">${weak ? `Ta matière la plus faible : <strong>${SUBJECTS[weak].emoji} ${SUBJECTS[weak].name}</strong> — la pratique personnalisée cible tes points faibles (méthode Duolingo).` : "Les quiz utilisent la répétition espacée : les questions ratées reviennent plus souvent."}</p>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.6rem">
           <button class="btn" id="quick-quiz">Quiz rapide</button>
+          <button class="btn secondary" id="exam-btn">📝 Test blanc</button>
+          <button class="btn secondary" id="search-btn">🔍 Rechercher</button>
           ${weak ? `<button class="btn secondary" id="weak-drill">💪 Renforcer ${SUBJECTS[weak].name}</button>` : ""}
         </div>
       </div>
     `));
     const wd = wrap.querySelector("#weak-drill");
     if (wd) wd.onclick = () => { Quiz.start(weak); go("quiz"); };
+    wrap.querySelector("#exam-btn").onclick = () => Exam.start();
+    wrap.querySelector("#search-btn").onclick = () => go("search");
     wrap.querySelector("#quick-quiz").onclick = () => startQuickQuiz();
     return wrap;
   }
@@ -584,6 +621,125 @@ const App = (() => {
     return wrap;
   }
 
+  function examView() {
+    const wrap = el(`<div></div>`);
+    const sess = Exam.session;
+    if (!sess) { go("home"); return el("<div></div>"); }
+
+    if (sess.finished) {
+      const total = sess.questions.length;
+      const note = Math.round((sess.correct / total) * 20);
+      const diag = Object.entries(sess.perSubject).map(([sid, ps]) => {
+        const rate = Math.round((ps.correct / ps.total) * 100);
+        const col = rate >= 70 ? "var(--success)" : rate >= 40 ? "var(--accent)" : "var(--danger)";
+        return `<div style="display:flex;justify-content:space-between;margin:0.4rem 0;font-size:0.9rem">
+          <span>${SUBJECTS[sid].emoji} ${SUBJECTS[sid].name}</span>
+          <strong style="color:${col}">${ps.correct}/${ps.total} (${rate}%)</strong></div>`;
+      }).join("");
+      wrap.append(el(`
+        <div class="card" style="text-align:center">
+          <h1>📝 Test blanc corrigé</h1>
+          <div style="font-size:2.4rem;font-weight:800;color:${note >= 10 ? "var(--success)" : "var(--danger)"}">${note}/20</div>
+          <p class="muted">${note >= 16 ? "Excellent niveau, garde le rythme ! 🏆" : note >= 10 ? "Base solide — cible les matières en rouge ci-dessous. 💪" : "Courage : refais les flashcards des matières faibles, puis retente. 🌱"}</p>
+        </div>
+        <div class="card"><h3>Diagnostic par matière</h3>${diag}</div>
+        <div class="card">
+          <button class="btn success" id="exam-again">Refaire un test blanc</button>
+          <button class="btn secondary" id="exam-home">Accueil</button>
+        </div>`));
+      wrap.querySelector("#exam-again").onclick = () => Exam.start();
+      wrap.querySelector("#exam-home").onclick = () => go("home");
+      return wrap;
+    }
+
+    const q = sess.questions[sess.idx];
+    const m = Math.floor(Math.max(0, sess.left) / 60), s = Math.max(0, sess.left) % 60;
+    const card = el(`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="chip">Question ${sess.idx + 1}/${sess.questions.length}</div>
+        <div id="exam-chrono" style="font-size:1.2rem;font-weight:800;color:var(--accent)">${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}</div>
+      </div>
+      <h2 style="margin:0.7rem 0">${q.q}</h2>
+      <div id="exam-options"></div>
+      <div id="exam-feedback"></div>
+    </div>`);
+    const opts = card.querySelector("#exam-options");
+    q.options.forEach((opt, i) => {
+      const b = el(`<button class="quiz-option">${opt}</button>`);
+      b.onclick = () => Exam.answer(i);
+      opts.append(b);
+    });
+    wrap.append(card);
+    return wrap;
+  }
+
+  function renderExamFeedback(q, ok, chosenIdx) {
+    const zone = document.querySelector("#exam-feedback");
+    if (!zone) return;
+    document.querySelectorAll("#exam-options .quiz-option").forEach((o, j) => {
+      o.disabled = true;
+      if (j === q.answer) o.classList.add("correct");
+      else if (j === chosenIdx) o.classList.add("wrong");
+    });
+    zone.innerHTML = `<div class="feedback-box ${ok ? "good" : "bad"}">
+      <strong>${ok ? "✅" : "❌"}</strong>
+      <p>${q.explain}</p>
+      <button class="btn small" style="margin-top:0.5rem" id="exam-next">${Exam.session.idx + 1 >= Exam.session.questions.length ? "Voir le résultat →" : "Suivant →"}</button>
+    </div>`;
+    zone.querySelector("#exam-next").onclick = () => Exam.next();
+  }
+
+  function searchView() {
+    const wrap = el(`<div>
+      <div class="section-title"><h1>🔍 Rechercher</h1><button class="back-link" id="back">← Accueil</button></div>
+      <div class="card">
+        <input type="text" id="search-input" placeholder="Ex : théorème du rang, Lenz, anaphore…">
+        <p class="muted" style="margin-top:0.5rem">Cherche dans tous les points d'intention, les quiz et les sujets de khôlle.</p>
+        <div id="search-results"></div>
+      </div>
+    </div>`);
+    wrap.querySelector("#back").onclick = () => go("home");
+    const input = wrap.querySelector("#search-input");
+    const results = wrap.querySelector("#search-results");
+    input.oninput = () => {
+      const q = input.value.trim().toLowerCase();
+      results.innerHTML = "";
+      if (q.length < 2) return;
+      let count = 0;
+      Object.entries(SUBJECTS).forEach(([sid, sub]) => {
+        sub.chapters.forEach((ch) => {
+          ch.points.forEach((p) => {
+            if (p.toLowerCase().includes(q) || ch.title.toLowerCase().includes(q)) {
+              count++;
+              results.append(el(`<div class="intention-point" style="cursor:pointer" data-subject="${sid}"><span class="tag">${sub.emoji} ${sub.name} · ${ch.title}</span><div>${p}</div></div>`));
+            }
+          });
+        });
+      });
+      Object.entries(QUIZ_BANK).forEach(([sid, bank]) => {
+        bank.forEach((qq) => {
+          if (qq.q.toLowerCase().includes(q)) {
+            count++;
+            results.append(el(`<div class="intention-point" style="cursor:pointer" data-subject="${sid}"><span class="tag">${SUBJECTS[sid].emoji} Quiz</span><div>${qq.q}</div></div>`));
+          }
+        });
+      });
+      Object.entries(KHOLLE_BANK).forEach(([sid, bank]) => {
+        bank.forEach((k) => {
+          if (k.prompt.toLowerCase().includes(q)) {
+            count++;
+            results.append(el(`<div class="intention-point" style="cursor:pointer" data-subject="${sid}"><span class="tag">${SUBJECTS[sid].emoji} Sujet de khôlle</span><div>${k.prompt}</div></div>`));
+          }
+        });
+      });
+      if (!count) results.append(el(`<p class="muted">Aucun résultat pour « ${escapeHtml(input.value)} ». Essaie un autre mot-clé.</p>`));
+      results.querySelectorAll("[data-subject]").forEach((r) => {
+        r.onclick = () => go("subject", r.dataset.subject);
+      });
+    };
+    return wrap;
+  }
+
   function progressView() {
     const wrap = el(`<div></div>`);
     wrap.append(el(`<h1>📈 Mon évolution</h1>`));
@@ -596,6 +752,23 @@ const App = (() => {
       </div>
     </div>`);
     wrap.append(statsCard);
+
+    // XP des 7 derniers jours (graphique en barres, type Duolingo)
+    const week = Gamify.weeklyXp();
+    const max = Math.max(20, ...week.map((d) => d.xp));
+    const weekCard = el(`<div class="card">
+      <h3>📅 Cette semaine</h3>
+      <div style="display:flex;align-items:flex-end;gap:6px;height:110px;margin-top:0.6rem">
+        ${week.map((d) => `
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end">
+            <span style="font-size:0.62rem;color:var(--text-dim)">${d.xp > 0 ? d.xp : ""}</span>
+            <div style="width:100%;border-radius:6px 6px 0 0;background:${d.xp > 0 ? "linear-gradient(180deg, var(--accent), var(--primary))" : "rgba(255,255,255,0.08)"};height:${Math.max(4, (d.xp / max) * 80)}px"></div>
+            <span style="font-size:0.62rem;color:var(--text-dim)">${d.label}</span>
+          </div>`).join("")}
+      </div>
+      <p class="muted" style="margin-top:0.5rem">${week.filter((d) => d.xp > 0).length}/7 jours actifs — vise 7/7 !</p>
+    </div>`);
+    wrap.append(weekCard);
 
     const perSubject = el(`<div class="card"><h3>Réussite par matière</h3><div id="subj-stats"></div></div>`);
     const cont = perSubject.querySelector("#subj-stats");
@@ -724,7 +897,7 @@ const App = (() => {
     }
   }
 
-  return { init, render, go, toast, confetti };
+  return { init, render, go, toast, confetti, renderExamFeedback };
 })();
 
 window.addEventListener("DOMContentLoaded", App.init);

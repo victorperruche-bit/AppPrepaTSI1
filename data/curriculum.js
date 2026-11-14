@@ -324,3 +324,42 @@ function videoUrlFor(chapterId) {
   if (!q) return null;
   return "https://www.youtube.com/results?search_query=" + encodeURIComponent(q);
 }
+
+// Questions supplémentaires (v2) — pour étoffé quiz, flashcards et tests blancs.
+QUIZ_BANK.maths.push(
+  { id: "q_ma6", q: "Une intégrale impropre converge si…",
+    options: ["La limite des intégrales partielles est finie", "Elle est toujours positive", "La primitive est nulle", "L'intervalle est borné"],
+    answer: 0, explain: "∫ sur un intervalle non borné converge ssi la limite finie existe : toujours vérifier la convergence AVANT de calculer." },
+  { id: "q_ma7", q: "Si A est inversible, alors det(A⁻¹) vaut :",
+    options: ["1/det(A)", "det(A)", "−det(A)", "0"],
+    answer: 0, explain: "A·A⁻¹ = I donc det(A)·det(A⁻¹) = 1 : le réflexe à avoir en khôlle d'algèbre." }
+);
+QUIZ_BANK.physique.push(
+  { id: "q_ph6", q: "Au bout d'un temps t = 5τ dans un circuit RC, la charge est :",
+    options: ["≈ 99 % de la valeur finale", "63 %", "50 %", "Toujours nulle"],
+    answer: 0, explain: "τ = 63 %, 3τ = 95 %, 5τ ≈ 99 % : le régime permanent est atteint à 5τ." },
+  { id: "q_ph7", q: "La puissance dissipée par une résistance vaut :",
+    options: ["P = U²/R = RI²", "P = UR", "P = R/U", "P = U/R"],
+    answer: 0, explain: "Deux expressions utiles selon ce que tu connais (U ou I) — les deux à connaître." }
+);
+QUIZ_BANK.si.push(
+  { id: "q_si7", q: "Le rendement d'un système se calcule comme :",
+    options: ["η = puissance utile / puissance absorbée", "η = puissance absorbée / puissance utile", "η = énergie perdue", "η = couple × vitesse"],
+    answer: 0, explain: "Toujours utile en sortie sur absorbée en entrée : à relier aux pertes (frottements, effet Joule…)." },
+  { id: "q_si8", q: "Un capteur dans un asservissement sert à :",
+    options: ["Mesurer la sortie pour la comparer à la consigne", "Amplifier la consigne", "Remplacer le correcteur", "Stocker l'énergie"],
+    answer: 0, explain: "Sans retour (capteur), pas d'asservissement : c'est la chaîne de retour qui ferme la boucle." }
+);
+QUIZ_BANK.francais.push(
+  { id: "q_fr5", q: "« Je n'ai pas peu dormir » : quelle erreur ?",
+    options: ["peu → pu (participe passé de pouvoir)", "peu → peux", "peu → peut", "Aucune erreur"],
+    answer: 0, explain: "« Je n'ai pas pu dormir » : le participe passé de pouvoir est « pu ». Erreur fréquente à la relecture." }
+);
+QUIZ_BANK.anglais.push(
+  { id: "q_en5", q: "« Hardly » signifie :",
+    options: ["à peine, guère", "dur, difficilement", "fortement", "presque"],
+    answer: 0, explain: "Faux ami : « hardly » = à peine (hardly ever = presque jamais), pas « durement »." },
+  { id: "q_en6", q: "« I wish I ___ more time. »",
+    options: ["had", "have", "will have", "would have"],
+    answer: 0, explain: "Wish + prétérit modéré exprime le regret : « I wish I had » = j'aimerais avoir (regret)." }
+);

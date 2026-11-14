@@ -5,7 +5,7 @@ const Store = (() => {
   const DB_STORE = "photos";
 
   const DEFAULT_STATE = {
-    profile: { name: "", dyslexiaMode: true, ttsEnabled: false, fontScale: 1, dailyGoal: 60 },
+    profile: { name: "", dyslexiaMode: true, ttsEnabled: false, fontScale: 1, dailyGoal: 60, onboarded: false },
     xp: 0,
     daily: { day: null, xp: 0 },
     streak: { count: 0, lastDay: null },
