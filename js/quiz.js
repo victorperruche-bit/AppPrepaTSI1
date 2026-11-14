@@ -29,6 +29,7 @@ const Quiz = (() => {
   function answer(optIdx) {
     if (session.answered) return;
     session.answered = true;
+    session.chosen = optIdx;
     const q = current();
     const correct = optIdx === q.answer;
     if (correct) session.score++;

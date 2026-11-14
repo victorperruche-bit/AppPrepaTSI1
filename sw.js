@@ -1,4 +1,4 @@
-const CACHE = "prepahub-v3";
+const CACHE = "prepahub-v4";
 const ASSETS = [
   "./",
   "./index.html",

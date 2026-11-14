@@ -6,7 +6,7 @@ const App = (() => {
   let photosCache = null;
 
   const $ = (sel) => document.querySelector(sel);
-  const el = (html) => { const d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; };
+  const el = (html) => { const d = document.createElement("div"); d.innerHTML = html.trim(); return d; };
 
   function init() {
     applySettings();
@@ -63,9 +63,13 @@ const App = (() => {
 
   function renderHeader() {
     const lvl = Gamify.levelFromXp(Store.state.xp);
-    $("#xp-bar").style.width = lvl.pct + "%";
     $("#level-label").textContent = `Nv ${lvl.level + 1} · ${lvl.name}`;
     $("#streak-label").textContent = `🔥 ${Store.state.streak.count} j`;
+    const dp = Gamify.dailyProgress();
+    const ring = $("#goal-ring");
+    ring.style.setProperty("--pct", dp.pct);
+    ring.classList.toggle("done", dp.done);
+    $("#goal-ring-inner").textContent = dp.done ? "✓" : dp.pct + "%";
   }
 
   function renderTabs() {
@@ -161,13 +165,19 @@ const App = (() => {
     const grid = el(`<div class="subject-grid"></div>`);
     Object.entries(SUBJECTS).forEach(([id, s]) => {
       const stats = Store.state.quizStats[id];
+      const mastery = Mastery.subjectMastery(id);
       const card = el(`
         <button class="subject-card">
+          <span class="accent-strip"></span>
           <span class="emoji">${s.emoji}</span>
           <div class="name">${s.name}</div>
-          <div class="meta">${s.chapters.length} chapitres${stats ? ` · ${stats.correct}/${stats.attempts} quiz OK` : ""}</div>
+          <div class="meta">${s.chapters.length} chapitres${stats ? ` · ${stats.correct}/${stats.attempts} quiz OK` : " · pas encore de quiz"}</div>
+          <div class="subj-progress">
+            <div class="progress-track"><div class="progress-fill" style="width:${mastery}%"></div></div>
+            <span class="pct">${mastery}%</span>
+          </div>
         </button>`);
-      card.style.borderColor = s.color + "55";
+      card.style.setProperty("--subj-color", s.color);
       card.onclick = () => go("subject", id);
       grid.append(card);
     });
@@ -276,36 +286,35 @@ const App = (() => {
     }
 
     const q = sess.questions[sess.idx];
+    const answered = sess.answered;
+    const correct = answered && sess.chosen === q.answer;
     const card = el(`<div class="card">
       <div class="chip">Question ${sess.idx + 1}/${sess.questions.length} · ${SUBJECTS[sess.subject].name}</div>
       <h2 style="margin:0.7rem 0">${q.q}</h2>
       <div class="progress-track" style="margin-bottom:0.9rem"><div class="progress-fill" style="width:${(sess.idx / sess.questions.length) * 100}%"></div></div>
       <div id="options"></div>
-      <div id="feedback"></div>
+      ${answered ? `
+        <div class="feedback-box ${correct ? "good" : "bad"}">
+          <strong>${correct ? "✅ Bravo !" : "❌ Presque…"}</strong>
+          <p>${q.explain}</p>
+          <button class="btn small" style="margin-top:0.5rem" id="next-btn">${sess.idx + 1 >= sess.questions.length ? "Voir le résultat →" : "Suivant →"}</button>
+        </div>` : ""}
     </div>`);
 
     const opts = card.querySelector("#options");
     q.options.forEach((opt, i) => {
       const b = el(`<button class="quiz-option">${opt}</button>`);
-      b.onclick = () => {
-        Quiz.answer(i);
-        const correct = i === q.answer;
-        card.querySelectorAll(".quiz-option").forEach((o, j) => {
-          o.disabled = true;
-          if (j === q.answer) o.classList.add("correct");
-          else if (j === i && !correct) o.classList.add("wrong");
-        });
-        card.querySelector("#feedback").innerHTML = `
-          <div class="feedback-box ${correct ? "good" : "bad"}">
-            <strong>${correct ? "✅ Bravo !" : "❌ Presque…"}</strong>
-            <p>${q.explain}</p>
-            ${!correct ? "" : ""}
-            <button class="btn small" style="margin-top:0.5rem" id="next-btn">Suivant →</button>
-          </div>`;
-        card.querySelector("#next-btn").onclick = () => { Quiz.next(); };
-      };
+      if (answered) {
+        b.disabled = true;
+        if (i === q.answer) b.classList.add("correct");
+        else if (i === sess.chosen) b.classList.add("wrong");
+      } else {
+        b.onclick = () => Quiz.answer(i);
+      }
       opts.append(b);
     });
+    const nb = card.querySelector("#next-btn");
+    if (nb) nb.onclick = () => Quiz.next();
     wrap.append(card);
 
     const speakBtn = el(`<button class="btn secondary small" style="margin-bottom:1rem">🔊 Lire la question</button>`);
