@@ -46,6 +46,7 @@ const Gamify = (() => {
     const s = Store.state;
     const before = levelFromXp(s.xp).level;
     s.xp += amount;
+    trackDaily(amount);
     const after = levelFromXp(s.xp).level;
     s.activityLog.unshift({ t: Date.now(), amount, reason });
     if (s.activityLog.length > 60) s.activityLog.length = 60;
@@ -56,6 +57,43 @@ const Gamify = (() => {
     }
     return { leveledUp: after > before, level: after };
   }
+
+  // Objectif quotidien (type Duolingo) : XP du jour vs objectif
+  function trackDaily(amount) {
+    const s = Store.state;
+    const t = today();
+    if (s.daily.day !== t) { s.daily.day = t; s.daily.xp = 0; }
+    const before = s.daily.xp;
+    s.daily.xp += amount;
+    if (before < (s.profile.dailyGoal || 60) && s.daily.xp >= (s.profile.dailyGoal || 60)) {
+      App.toast("🎯 Objectif du jour atteint ! Chapeau !");
+      App.confetti();
+    }
+  }
+
+  function dailyProgress() {
+    const s = Store.state;
+    const t = today();
+    if (s.daily.day !== t) { s.daily.day = t; s.daily.xp = 0; }
+    const goal = s.profile.dailyGoal || 60;
+    return { xp: s.daily.xp, goal, pct: Math.min(100, Math.round((s.daily.xp / goal) * 100)), done: s.daily.xp >= goal };
+  }
+
+  // Pratique personnalisée (type Duolingo) : la matière la plus faible en priorité
+  function weakestSubject() {
+    const entries = Object.entries(Store.state.quizStats);
+    if (!entries.length) return null;
+    let worst = null, worstRate = 2;
+    entries.forEach(([id, q]) => {
+      if (q.attempts >= 2) {
+        const rate = q.correct / q.attempts;
+        if (rate < worstRate) { worstRate = rate; worst = id; }
+      }
+    });
+    return worst;
+  }
+
+  function touchStreakDaily() { touchStreak(); }
 
   function checkBadges() {
     const s = Store.state;
@@ -68,5 +106,5 @@ const Gamify = (() => {
     return newly;
   }
 
-  return { levelFromXp, touchStreak, addXp, checkBadges, BADGES, today };
+  return { levelFromXp, touchStreak, touchStreakDaily, addXp, checkBadges, BADGES, today, dailyProgress, weakestSubject };
 })();

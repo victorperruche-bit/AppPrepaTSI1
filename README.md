@@ -7,6 +7,11 @@ Web app (PWA) installable sur **iPhone** et sur **ordinateur**, pensée pour cen
 - **📚 5 matières prépa TSI** : Maths, Physique, Sciences Industrielles, Français, Anglais — chapitres clés avec **points d'intention** (les réflexes à retenir)
 - **📸 Photos de cours** : prends en photo un exercice ou un cours, classe-le par matière, suis son statut (À revoir → En correction → Validé), ajoute des notes de correction
 - **🎯 Quiz avec répétition espacée** : les questions ratées reviennent plus souvent (algorithme inspiré de SM-2 / Ebbinghaus)
+- **🗂️ Flashcards type Anki** : cartes à retourner générées des points d'intention et des quiz, notation À revoir / Difficile / Correct / Facile, compteur de cartes dues
+- **⏱️ Objectif quotidien + pratique personnalisée** (méthode Duolingo) : XP du jour vs objectif, la matière la plus faible est ciblée en priorité
+- **🌲 Sessions de focus Pomodoro** (méthode Forest) : 15/25/50 min de concentration récompensées en XP
+- **📈 Maîtrise par chapitre** (méthode Khan Academy) : À apprendre → En cours → Presque maîtrisé → Maîtrisé
+- **💾 Sauvegarde/export** : tes données restent locales, exportables en un fichier JSON
 - **🎤 Espace khôlles** : sujet d'oral au hasard par matière, chrono 20 min, attendus du colleur, réflexes de khôlleux, auto-évaluation notée sur 5
 - **📈 Suivi de progression** : XP, niveaux, série de jours (streak), badges, réussite par matière
 - **🎬 Vidéos** : liens vers des chaînes de référence (El Ji, MicroMaths, ScienceClic, Méthode Physique) + recherche ciblée par chapitre
@@ -56,6 +61,9 @@ js/store.js         — stockage local (localStorage + IndexedDB)
 js/srs.js           — répétition espacée
 js/gamify.js        — XP, niveaux, streaks, badges
 js/quiz.js          — moteur de quiz
+js/flashcards.js    — flashcards type Anki
+js/mastery.js        — maîtrise par chapitre
+js/focus.js         — minuteur Pomodoro
 js/correction.js    — photos de cours + analyse de texte + checklists
 js/tts.js           — synthèse vocale
 js/app.js           — interface et navigation

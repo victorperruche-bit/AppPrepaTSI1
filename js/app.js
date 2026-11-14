@@ -1,6 +1,6 @@
 // app.js — Rendu de l'interface (SPA vanilla, léger et rapide partout)
 const App = (() => {
-  let view = "home";       // home | subject | quiz | photos | photo | progress | settings
+  let view = "home";       // home | subject | quiz | flashcards | photos | photo | kholle | focus | progress | settings
   let currentSubject = null;
   let currentPhoto = null;
   let photosCache = null;
@@ -34,6 +34,7 @@ const App = (() => {
     if (v === "photo") currentPhoto = data;
     if (v === "photos") photosCache = null;
     if (v !== "kholle" && kholleTimer) { clearInterval(kholleTimer); kholleTimer = null; }
+    if (v !== "focus" && Focus.state && Focus.state.running) { /* le chrono focus continue entre les vues */ }
     render();
     window.scrollTo(0, 0);
   }
@@ -50,6 +51,8 @@ const App = (() => {
     else if (view === "photos") photosView().then((node) => main.append(node));
     else if (view === "photo") main.append(photoView(currentPhoto));
     else if (view === "kholle") main.append(kholleView());
+    else if (view === "flashcards") main.append(flashcardsView());
+    else if (view === "focus") main.append(focusView());
     else if (view === "progress") main.append(progressView());
     else if (view === "settings") main.append(settingsView());
 
@@ -99,6 +102,29 @@ const App = (() => {
       </div>
     `));
 
+    // Objectif du jour (type Duolingo)
+    const dp = Gamify.dailyProgress();
+    const due = Flashcards.dueCountAll();
+    wrap.append(el(`
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h2>🎯 Objectif du jour</h2>
+          <span class="chip">${dp.done ? "✅ Atteint !" : dp.pct + "%"}</span>
+        </div>
+        <div class="progress-track" style="margin:0.6rem 0"><div class="progress-fill" style="width:${dp.pct}%"></div></div>
+        <p class="muted">${dp.xp} / ${dp.goal} XP aujourd'hui ${dp.done ? "— objectif atteint, bravo ! 🎉" : ""}</p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.7rem">
+          <button class="btn small" id="go-flashcards">🗂️ ${due} flashcards à revoir</button>
+          <button class="btn small secondary" id="go-focus">🌲 Session de focus</button>
+        </div>
+      </div>
+    `));
+    wrap.querySelector("#go-flashcards").onclick = () => {
+      const weak = Gamify.weakestSubject() || Object.keys(SUBJECTS)[0];
+      Flashcards.start(weak);
+    };
+    wrap.querySelector("#go-focus").onclick = () => go("focus");
+
     const grid = el(`<div class="subject-grid"></div>`);
     Object.entries(SUBJECTS).forEach(([id, s]) => {
       const stats = Store.state.quizStats[id];
@@ -116,13 +142,19 @@ const App = (() => {
     sect.append(grid);
     wrap.append(sect);
 
+    const weak = Gamify.weakestSubject();
     wrap.append(el(`
       <div class="card">
         <h2>🎯 Révision du jour</h2>
-        <p class="muted">Les quiz utilisent la répétition espacée : les questions ratées reviennent plus souvent.</p>
-        <button class="btn" style="margin-top:0.6rem" id="quick-quiz">Quiz rapide (toutes matières)</button>
+        <p class="muted">${weak ? `Ta matière la plus faible : <strong>${SUBJECTS[weak].emoji} ${SUBJECTS[weak].name}</strong> — la pratique personnalisée cible tes points faibles (méthode Duolingo).` : "Les quiz utilisent la répétition espacée : les questions ratées reviennent plus souvent."}</p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.6rem">
+          <button class="btn" id="quick-quiz">Quiz rapide</button>
+          ${weak ? `<button class="btn secondary" id="weak-drill">💪 Renforcer ${SUBJECTS[weak].name}</button>` : ""}
+        </div>
       </div>
     `));
+    const wd = wrap.querySelector("#weak-drill");
+    if (wd) wd.onclick = () => { Quiz.start(weak); go("quiz"); };
     wrap.querySelector("#quick-quiz").onclick = () => startQuickQuiz();
     return wrap;
   }
@@ -146,8 +178,14 @@ const App = (() => {
 
     s.chapters.forEach((ch) => {
       const vid = videoUrlFor(ch.id);
+      const m = Mastery.chapterMastery(ch.id);
+      const lb = Mastery.label(m);
       const card = el(`<div class="card">
-        <h3>${ch.title}</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem">
+          <h3 style="flex:1">${ch.title}</h3>
+          <span class="chip" style="color:${lb.color};border-color:${lb.color}">${m}% · ${lb.txt}</span>
+        </div>
+        <div class="progress-track" style="margin:0.5rem 0"><div class="progress-fill" style="width:${m}%"></div></div>
         ${ch.points.map((p) => `<div class="intention-point"><span class="tag">Point d'intention</span><div>${p}</div></div>`).join("")}
         ${vid ? `<a class="btn secondary small" style="display:inline-block;margin-top:0.5rem;text-decoration:none" href="${vid}" target="_blank" rel="noopener">🎬 Voir une vidéo explicative</a>` : ""}
       </div>`);
@@ -156,10 +194,18 @@ const App = (() => {
 
     const actions = el(`<div class="card">
       <h3>Entraîne-toi</h3>
-      <button class="btn" id="quiz-btn">🎯 Lancer un quiz ${s.name}</button>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button class="btn" id="quiz-btn">🎯 Quiz ${s.name}</button>
+        <button class="btn secondary" id="fc-btn">🗂️ Flashcards</button>
+      </div>
     </div>`);
     actions.querySelector("#quiz-btn").onclick = () => { Quiz.start(subjectId); go("quiz"); };
+    actions.querySelector("#fc-btn").onclick = () => Flashcards.start(subjectId);
     wrap.append(actions);
+
+    const sm = Mastery.subjectMastery(subjectId);
+    wrap.append(el(`<div class="card"><h3>📈 Maîtrise globale : ${sm}%</h3>
+      <p class="muted">La maîtrise monte quand tes flashcards et quiz sont réussis dans la durée (répétition espacée).</p></div>`));
 
     if (VIDEO_CHANNELS[subjectId]) {
       const vids = el(`<div class="card"><h3>🎬 Chaînes vidéo recommandées</h3>
@@ -446,6 +492,98 @@ const App = (() => {
     return wrap;
   }
 
+  function flashcardsView() {
+    const wrap = el(`<div></div>`);
+    const sess = Flashcards.session;
+    if (!sess) { go("home"); return el("<div></div>"); }
+
+    if (sess.finished) {
+      const st = sess.stats;
+      wrap.append(el(`
+        <div class="card" style="text-align:center">
+          <h1>🗂️ Paquet terminé !</h1>
+          <div style="font-size:1.1rem;margin:0.7rem 0">
+            ✅ Correct : ${st.good + st.easy} · 😅 Difficile : ${st.hard} · 🔁 À revoir : ${st.again}
+          </div>
+          <p class="muted">Les cartes « À revoir » reviendront demain — c'est exactement le principe de la répétition espacée.</p>
+          <button class="btn success" id="fc-again">Refaire un paquet</button>
+          <button class="btn secondary" id="fc-home">Accueil</button>
+        </div>`));
+      wrap.querySelector("#fc-again").onclick = () => Flashcards.start(sess.subject);
+      wrap.querySelector("#fc-home").onclick = () => go("home");
+      return wrap;
+    }
+
+    const c = sess.queue[sess.idx];
+    const card = el(`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="chip">${SUBJECTS[sess.subject].emoji} ${SUBJECTS[sess.subject].name}</div>
+        <span class="muted">${sess.idx + 1}/${sess.queue.length}</span>
+      </div>
+      <div class="flashcard" id="fc-card" style="cursor:pointer;margin:1rem 0;padding:1.2rem;background:var(--surface-2);border:2px solid rgba(255,255,255,0.14);border-radius:16px;min-height:120px;display:flex;align-items:center;justify-content:center;text-align:center">
+        <div>${c.front}</div>
+      </div>
+      ${sess.flipped ? `
+        <div class="intention-point"><span class="tag">Réponse</span><div>${c.back}</div></div>
+        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.8rem">
+          <button class="btn small danger" data-g="1">🔁 À revoir</button>
+          <button class="btn small" data-g="2" style="background:#e67e22">😅 Difficile</button>
+          <button class="btn small success" data-g="3">✅ Correct</button>
+          <button class="btn small" data-g="4" style="background:#3498db">⚡ Facile</button>
+        </div>` : `
+        <button class="btn" id="fc-flip">Retourner la carte 👆</button>`}
+    </div>`);
+
+    card.querySelector("#fc-card").onclick = () => { if (!sess.flipped) Flashcards.flip(); };
+    const flipBtn = card.querySelector("#fc-flip");
+    if (flipBtn) flipBtn.onclick = () => Flashcards.flip();
+    card.querySelectorAll("[data-g]").forEach((b) => {
+      b.onclick = () => Flashcards.grade(parseInt(b.dataset.g, 10));
+    });
+    wrap.append(card);
+    const speakBtn = el(`<button class="btn secondary small" style="margin-bottom:1rem">🔊 Lire</button>`);
+    speakBtn.onclick = () => TTS.speak(sess.flipped ? c.back : c.front);
+    wrap.prepend(speakBtn);
+    return wrap;
+  }
+
+  function focusView() {
+    const wrap = el(`<div></div>`);
+    const st = Focus.state;
+    if (!st) {
+      wrap.append(el(`
+        <div class="section-title"><h1>🌲 Session de focus</h1><button class="back-link" id="back">← Accueil</button></div>
+        <div class="card">
+          <p class="muted">Pomodoro : un temps de travail sans distraction, récompensé en XP. Choisis ta durée, mets le téléphone en mode avion si possible, et travaille dans le vide. 🚫📱</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.8rem">
+            <button class="btn" data-min="25">⏱️ 25 min (+100 XP)</button>
+            <button class="btn secondary" data-min="15">🧠 15 min (+60 XP)</button>
+            <button class="btn secondary" data-min="50">💪 50 min (+200 XP)</button>
+          </div>
+        </div>`));
+      wrap.querySelector("#back").onclick = () => go("home");
+      wrap.querySelectorAll("[data-min]").forEach((b) => {
+        b.onclick = () => Focus.start(parseInt(b.dataset.min, 10));
+      });
+      return wrap;
+    }
+    const m = Math.floor(st.left / 60), s = st.left % 60;
+    wrap.append(el(`
+      <div class="section-title"><h1>🌲 Concentration</h1><button class="back-link" id="back">← Accueil</button></div>
+      <div class="card" style="text-align:center">
+        <div id="focus-chrono" style="font-size:3rem;font-weight:800;color:var(--accent)">${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}</div>
+        <p class="muted">${st.running ? "Concentration maximale 💪" : "En pause ⏸"}</p>
+        <div style="display:flex;gap:0.5rem;justify-content:center;margin-top:0.8rem">
+          <button class="btn secondary" id="f-pause">${st.running ? "⏸ Pause" : "▶️ Reprendre"}</button>
+          <button class="btn danger" id="f-stop">Arrêter</button>
+        </div>
+      </div>`));
+    wrap.querySelector("#back").onclick = () => go("home");
+    wrap.querySelector("#f-pause").onclick = () => Focus.pause();
+    wrap.querySelector("#f-stop").onclick = () => Focus.reset();
+    return wrap;
+  }
+
   function progressView() {
     const wrap = el(`<div></div>`);
     wrap.append(el(`<h1>📈 Mon évolution</h1>`));
@@ -507,6 +645,20 @@ const App = (() => {
           <div><strong>Taille du texte</strong><p class="muted">Agrandis si tu lis mieux en grand.</p></div>
           <div><button class="btn small secondary" id="font-minus">A−</button> <button class="btn small secondary" id="font-plus">A+</button></div>
         </div>
+        <div class="setting-row">
+          <div><strong>Objectif quotidien</strong><p class="muted">L'XP à viser chaque jour (méthode Duolingo : petit mais chaque jour).</p></div>
+          <select id="set-goal" style="width:auto">
+            ${[30, 60, 100, 150].map((g) => `<option value="${g}" ${p.dailyGoal === g ? "selected" : ""}>${g} XP/jour</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="card">
+        <h3>💾 Sauvegarde de mes données</h3>
+        <p class="muted">Tes données restent sur cet appareil. Exporte un fichier de sauvegarde pour ne rien perdre (ou transférer sur un autre appareil).</p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.6rem">
+          <button class="btn small" id="export-btn">⬇️ Exporter ma sauvegarde</button>
+          <label class="btn small secondary" style="display:inline-block">⬆️ Importer une sauvegarde<input type="file" id="import-input" accept="application/json" style="display:none"></label>
+        </div>
       </div>
       <div class="card">
         <h3>À propos des méthodes</h3>
@@ -521,6 +673,24 @@ const App = (() => {
     wrap.querySelector("#set-tts").onchange = (e) => { Store.state.profile.ttsEnabled = e.target.checked; Store.save(); applySettings(); };
     wrap.querySelector("#font-plus").onclick = () => { p.fontScale = Math.min(1.4, p.fontScale + 0.08); Store.save(); applySettings(); };
     wrap.querySelector("#font-minus").onclick = () => { p.fontScale = Math.max(0.9, p.fontScale - 0.08); Store.save(); applySettings(); };
+    wrap.querySelector("#set-goal").onchange = (e) => { p.dailyGoal = parseInt(e.target.value, 10); Store.save(); toast("Objectif quotidien mis à jour !"); };
+    wrap.querySelector("#export-btn").onclick = async () => { await Store.exportBackup(); toast("Sauvegarde exportée 💾"); };
+    wrap.querySelector("#import-input").onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        try {
+          await Store.importBackup(ev.target.result);
+          toast("Sauvegarde restaurée ✅");
+          applySettings();
+          render();
+        } catch (err) {
+          toast("Fichier invalide ❌");
+        }
+      };
+      reader.readAsText(file);
+    };
     wrap.querySelector("#reset-all").onclick = () => {
       if (confirm("Tout effacer ? XP, badges, photos, statistiques. Irréversible.")) { Store.reset(); go("home"); }
     };

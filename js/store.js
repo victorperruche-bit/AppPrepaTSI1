@@ -5,8 +5,9 @@ const Store = (() => {
   const DB_STORE = "photos";
 
   const DEFAULT_STATE = {
-    profile: { name: "", dyslexiaMode: true, ttsEnabled: false, fontScale: 1 },
+    profile: { name: "", dyslexiaMode: true, ttsEnabled: false, fontScale: 1, dailyGoal: 60 },
     xp: 0,
+    daily: { day: null, xp: 0 },
     streak: { count: 0, lastDay: null },
     badges: [],
     srs: {},           // id carte -> { ease, interval, due, reps }
@@ -85,6 +86,26 @@ const Store = (() => {
     reset() { state = freshState(); save(); },
     savePhoto,
     getPhotos,
-    deletePhoto
+    deletePhoto,
+    // Sauvegarde/restauration (type Anki) : export JSON de la progression
+    async exportBackup() {
+      const photos = await getPhotos();
+      const payload = { version: 1, exported: new Date().toISOString(), state, photos };
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `prepahub-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+    async importBackup(json) {
+      const data = JSON.parse(json);
+      if (!data.state) throw new Error("Fichier de sauvegarde invalide");
+      state = { ...freshState(), ...data.state };
+      save();
+      if (Array.isArray(data.photos)) {
+        for (const p of data.photos) await savePhoto(p);
+      }
+    }
   };
 })();
