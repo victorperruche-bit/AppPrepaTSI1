@@ -1,6 +1,6 @@
 // app.js — Rendu de l'interface (SPA vanilla, léger et rapide partout)
 const App = (() => {
-  let view = "home";       // home | subject | quiz | flashcards | exam | photos | photo | kholle | focus | search | progress | settings
+  let view = "home";       // home | subject | quiz | flashcards | exam | photos | photo | kholle | focus | search | planning | progress | settings
   let currentSubject = null;
   let currentPhoto = null;
   let photosCache = null;
@@ -54,6 +54,7 @@ const App = (() => {
     else if (view === "flashcards") main.append(flashcardsView());
     else if (view === "exam") main.append(examView());
     else if (view === "search") main.append(searchView());
+    else if (view === "planning") main.append(planningView());
     else if (view === "focus") main.append(focusView());
     else if (view === "progress") main.append(progressView());
     else if (view === "settings") main.append(settingsView());
@@ -77,6 +78,7 @@ const App = (() => {
       { id: "home", icon: "🏠", label: "Accueil" },
       { id: "photos", icon: "📸", label: "Mes photos" },
       { id: "kholle", icon: "🎤", label: "Khôlles" },
+      { id: "planning", icon: "📅", label: "Planning" },
       { id: "progress", icon: "📈", label: "Progrès" },
       { id: "settings", icon: "⚙️", label: "Réglages" }
     ];
@@ -138,6 +140,26 @@ const App = (() => {
         </div>
       </div>
     `));
+
+    // Bandeau prochain événement (colle/DS) depuis le planning Google Calendar
+    const nextEv = Planning.next();
+    if (nextEv) {
+      const u = Planning.urgency(Planning.daysUntil(nextEv.date));
+      const subj = nextEv.subject ? SUBJECTS[nextEv.subject] : null;
+      const banner = el(`
+        <div class="card" style="cursor:pointer;border:1.5px solid ${u.color};padding:0.85rem 1rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem">
+            <div style="flex:1">
+              <span class="chip" style="color:${u.color};border-color:${u.color}">${nextEv.type === "DS" ? "📝 Prochain DS" : "🎤 Prochaine colle"} · ${u.label}</span>
+              <div style="font-weight:800;margin-top:0.35rem">${subj ? subj.emoji + " " : ""}${nextEv.title}</div>
+              <div class="muted" style="font-size:0.78rem">${Planning.fmtDate(nextEv.date)}</div>
+            </div>
+            <span style="font-size:1.3rem">📅</span>
+          </div>
+        </div>`);
+      banner.onclick = () => go("planning");
+      wrap.append(banner);
+    }
 
     // Objectif du jour (type Duolingo)
     const dp = Gamify.dailyProgress();
@@ -746,6 +768,72 @@ const App = (() => {
         r.onclick = () => go("subject", r.dataset.subject);
       });
     };
+    return wrap;
+  }
+
+  function planningView() {
+    const wrap = el(`<div></div>`);
+    const next = Planning.next();
+    wrap.append(el(`<div class="section-title"><h1>📅 Colles & DS</h1></div>`));
+
+    if (!next) {
+      wrap.append(el(`<div class="card"><p class="muted">Aucune colle ni DS à venir dans le planning. Profites pour prendre de l'avance ! 💪</p></div>`));
+      return wrap;
+    }
+
+    // Prochain événement mis en avant
+    const u0 = Planning.urgency(Planning.daysUntil(next.date));
+    const subj0 = next.subject ? SUBJECTS[next.subject] : null;
+    wrap.append(el(`
+      <div class="card" style="border:1.5px solid ${u0.color}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem">
+          <div>
+            <span class="chip" style="color:${u0.color};border-color:${u0.color}">${next.type === "DS" ? "📝 DS" : "🎤 Colle"} · ${u0.label}</span>
+            <h2 style="margin-top:0.5rem">${subj0 ? subj0.emoji + " " : ""}${next.title}</h2>
+            <p class="muted" style="margin-top:0.3rem">${Planning.fmtDate(next.date)}${next.salle ? " · " + next.salle : ""}</p>
+          </div>
+        </div>
+        ${next.subject ? `
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.8rem">
+          <button class="btn small" id="plan-revise">🎯 Réviser ${subj0.name}</button>
+          <button class="btn small secondary" id="plan-kholle">🎤 S'y entraîner (khôlle blanche)</button>
+        </div>` : ""}
+      </div>`));
+    const pr = wrap.querySelector("#plan-revise");
+    if (pr) pr.onclick = () => go("subject", next.subject);
+    const pk = wrap.querySelector("#plan-kholle");
+    if (pk) pk.onclick = () => go("kholle");
+
+    // Liste des prochains événements
+    const list = Planning.upcoming().slice(1, 15);
+    const listCard = el(`<div class="card"><h3>Ensuite</h3><div id="plan-list"></div></div>`);
+    const cont = listCard.querySelector("#plan-list");
+    if (!list.length) {
+      cont.append(el(`<p class="muted">Rien d'autre de programmé pour l'instant.</p>`));
+    }
+    list.forEach((e) => {
+      const u = Planning.urgency(Planning.daysUntil(e.date));
+      const subj = e.subject ? SUBJECTS[e.subject] : null;
+      const row = el(`
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;padding:0.65rem 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:0.92rem">${subj ? subj.emoji + " " : ""}${e.title}</div>
+            <div class="muted" style="font-size:0.78rem">${Planning.fmtDate(e.date)}${e.salle ? " · " + e.salle : ""}</div>
+          </div>
+          <span class="chip" style="color:${u.color};border-color:${u.color};flex-shrink:0">${e.type === "DS" ? "DS " : ""}${u.label}</span>
+        </div>`);
+      if (e.subject) row.onclick = () => go("subject", e.subject);
+      cont.append(row);
+    });
+    wrap.append(listCard);
+
+    wrap.append(el(`
+      <div class="card">
+        <h3>💡 Stratégie de révision</h3>
+        <div class="intention-point"><span class="tag">J-7 → J-3</span><div>Flashcards + quiz quotidiens sur la matière : la répétition espacée fait le travail.</div></div>
+        <div class="intention-point"><span class="tag">J-3 → J-1</span><div>Khôlles blanches chronométrées dans l'app + relecture de tes photos de cours validées.</div></div>
+        <div class="intention-point"><span class="tag">Veille du DS</span><div>Un test blanc complet, puis une session de focus 25 min. Pas de nouveauté : uniquement de la consolidation.</div></div>
+      </div>`));
     return wrap;
   }
 

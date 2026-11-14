@@ -1,4 +1,4 @@
-const CACHE = "prepahub-v4";
+const CACHE = "prepahub-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -15,7 +15,8 @@ const ASSETS = [
   "./js/focus.js",
   "./js/correction.js",
   "./js/tts.js",
-  "./data/curriculum.js"
+  "./data/curriculum.js",
+  "./data/planning.js"
 ];
 
 self.addEventListener("install", (e) => {
