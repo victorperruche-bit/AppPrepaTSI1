@@ -1,0 +1,560 @@
+// app.js — Rendu de l'interface (SPA vanilla, léger et rapide partout)
+const App = (() => {
+  let view = "home";       // home | subject | quiz | photos | photo | progress | settings
+  let currentSubject = null;
+  let currentPhoto = null;
+  let photosCache = null;
+
+  const $ = (sel) => document.querySelector(sel);
+  const el = (html) => { const d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; };
+
+  function init() {
+    applySettings();
+    registerSW();
+    render();
+  }
+
+  function registerSW() {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
+  }
+
+  function applySettings() {
+    const p = Store.state.profile;
+    document.body.classList.toggle("dyslexia-mode", p.dyslexiaMode);
+    document.documentElement.style.setProperty("--font-scale", p.fontScale);
+    TTS.setEnabled(p.ttsEnabled);
+  }
+
+  let kholleTimer = null;
+
+  // ===== Navigation =====
+  function go(v, data) {
+    view = v;
+    if (v === "subject") currentSubject = data;
+    if (v === "photo") currentPhoto = data;
+    if (v === "photos") photosCache = null;
+    if (v !== "kholle" && kholleTimer) { clearInterval(kholleTimer); kholleTimer = null; }
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  // ===== Rendu =====
+  function render() {
+    const main = $("#app");
+    main.innerHTML = "";
+    renderHeader();
+
+    if (view === "home") main.append(homeView());
+    else if (view === "subject") main.append(subjectView(currentSubject));
+    else if (view === "quiz") main.append(quizView());
+    else if (view === "photos") photosView().then((node) => main.append(node));
+    else if (view === "photo") main.append(photoView(currentPhoto));
+    else if (view === "kholle") main.append(kholleView());
+    else if (view === "progress") main.append(progressView());
+    else if (view === "settings") main.append(settingsView());
+
+    renderTabs();
+  }
+
+  function renderHeader() {
+    const lvl = Gamify.levelFromXp(Store.state.xp);
+    $("#xp-bar").style.width = lvl.pct + "%";
+    $("#level-label").textContent = `Nv ${lvl.level + 1} · ${lvl.name}`;
+    $("#streak-label").textContent = `🔥 ${Store.state.streak.count} j`;
+  }
+
+  function renderTabs() {
+    const tabs = [
+      { id: "home", icon: "🏠", label: "Accueil" },
+      { id: "photos", icon: "📸", label: "Mes photos" },
+      { id: "kholle", icon: "🎤", label: "Khôlles" },
+      { id: "progress", icon: "📈", label: "Progrès" },
+      { id: "settings", icon: "⚙️", label: "Réglages" }
+    ];
+    const nav = $("#tabs");
+    nav.innerHTML = "";
+    tabs.forEach((t) => {
+      const b = document.createElement("button");
+      b.innerHTML = `<span class="icon">${t.icon}</span><span>${t.label}</span>`;
+      b.className = view === t.id || (view === "subject" && t.id === "home") || (view === "quiz" && t.id === "home") ? "active" : "";
+      b.onclick = () => go(t.id);
+      nav.append(b);
+    });
+  }
+
+  // ===== Vues =====
+  function homeView() {
+    const wrap = el(`<div></div>`);
+    const lvl = Gamify.levelFromXp(Store.state.xp);
+
+    wrap.append(el(`
+      <div class="card">
+        <h1>Bonjour 👋</h1>
+        <p class="muted">Ta centrale de révision prépa TSI. Ajoute des photos de cours, révise avec les quiz, garde tes points d'intention.</p>
+        <div class="stat-row" style="margin-top:0.8rem">
+          <div class="stat-box"><div class="val">${Store.state.xp}</div><div class="label">XP total</div></div>
+          <div class="stat-box"><div class="val">${Store.state.streak.count}</div><div class="label">Jours d'affilée</div></div>
+          <div class="stat-box"><div class="val">${Object.keys(Store.state.photoStatus).length}</div><div class="label">Photos de cours</div></div>
+        </div>
+      </div>
+    `));
+
+    const grid = el(`<div class="subject-grid"></div>`);
+    Object.entries(SUBJECTS).forEach(([id, s]) => {
+      const stats = Store.state.quizStats[id];
+      const card = el(`
+        <button class="subject-card">
+          <span class="emoji">${s.emoji}</span>
+          <div class="name">${s.name}</div>
+          <div class="meta">${s.chapters.length} chapitres${stats ? ` · ${stats.correct}/${stats.attempts} quiz OK` : ""}</div>
+        </button>`);
+      card.style.borderColor = s.color + "55";
+      card.onclick = () => go("subject", id);
+      grid.append(card);
+    });
+    const sect = el(`<div><div class="section-title"><h2>Mes matières</h2></div></div>`);
+    sect.append(grid);
+    wrap.append(sect);
+
+    wrap.append(el(`
+      <div class="card">
+        <h2>🎯 Révision du jour</h2>
+        <p class="muted">Les quiz utilisent la répétition espacée : les questions ratées reviennent plus souvent.</p>
+        <button class="btn" style="margin-top:0.6rem" id="quick-quiz">Quiz rapide (toutes matières)</button>
+      </div>
+    `));
+    wrap.querySelector("#quick-quiz").onclick = () => startQuickQuiz();
+    return wrap;
+  }
+
+  function startQuickQuiz() {
+    const subjects = Object.keys(QUIZ_BANK);
+    const pick = subjects[Math.floor(Math.random() * subjects.length)];
+    Quiz.start(pick);
+    go("quiz");
+  }
+
+  function subjectView(subjectId) {
+    const s = SUBJECTS[subjectId];
+    const wrap = el(`<div></div>`);
+    wrap.append(el(`
+      <div class="section-title">
+        <h1>${s.emoji} ${s.name}</h1>
+        <button class="back-link" id="back">← Accueil</button>
+      </div>`));
+    wrap.querySelector("#back").onclick = () => go("home");
+
+    s.chapters.forEach((ch) => {
+      const vid = videoUrlFor(ch.id);
+      const card = el(`<div class="card">
+        <h3>${ch.title}</h3>
+        ${ch.points.map((p) => `<div class="intention-point"><span class="tag">Point d'intention</span><div>${p}</div></div>`).join("")}
+        ${vid ? `<a class="btn secondary small" style="display:inline-block;margin-top:0.5rem;text-decoration:none" href="${vid}" target="_blank" rel="noopener">🎬 Voir une vidéo explicative</a>` : ""}
+      </div>`);
+      wrap.append(card);
+    });
+
+    const actions = el(`<div class="card">
+      <h3>Entraîne-toi</h3>
+      <button class="btn" id="quiz-btn">🎯 Lancer un quiz ${s.name}</button>
+    </div>`);
+    actions.querySelector("#quiz-btn").onclick = () => { Quiz.start(subjectId); go("quiz"); };
+    wrap.append(actions);
+
+    if (VIDEO_CHANNELS[subjectId]) {
+      const vids = el(`<div class="card"><h3>🎬 Chaînes vidéo recommandées</h3>
+        ${VIDEO_CHANNELS[subjectId].map((c) => `<p style="margin:0.4rem 0"><a href="${c.url}" target="_blank" rel="noopener">▶️ ${c.label}</a></p>`).join("")}
+        <p class="muted" style="margin-top:0.5rem">Regarde une vidéo APRÈS avoir essayé l'exercice : la vidéo consolide, elle ne remplace pas l'effort.</p></div>`);
+      wrap.append(vids);
+    }
+    return wrap;
+  }
+
+  function quizView() {
+    const wrap = el(`<div></div>`);
+    const sess = Quiz.session;
+    if (!sess) { wrap.append(el(`<div class="card">Aucun quiz en cours. <button class="btn secondary" id="back">Retour</button></div>`)); wrap.querySelector("#back").onclick = () => go("home"); return wrap; }
+
+    if (sess.finished) {
+      const r = sess.result;
+      const msg = r.pct >= 80 ? "Excellent ! 🏆" : r.pct >= 50 ? "Bien, continue ! 💪" : "Courage : chaque erreur t'apprend quelque chose. 🌱";
+      wrap.append(el(`
+        <div class="card" style="text-align:center">
+          <h1>${r.pct >= 70 ? "🎉" : "📝"} Quiz terminé</h1>
+          <div style="font-size:2.2rem;font-weight:800;color:var(--accent)">${r.score}/${r.total}</div>
+          <p>${msg}</p>
+          <p class="muted" style="margin-top:0.5rem">Les questions ratées reviendront plus tôt dans tes révisions (répétition espacée).</p>
+          <button class="btn success" id="again">Rejouer</button>
+          <button class="btn secondary" id="home">Accueil</button>
+        </div>`));
+      wrap.querySelector("#again").onclick = () => { Quiz.start(r.subject); render(); };
+      wrap.querySelector("#home").onclick = () => go("home");
+      return wrap;
+    }
+
+    const q = sess.questions[sess.idx];
+    const card = el(`<div class="card">
+      <div class="chip">Question ${sess.idx + 1}/${sess.questions.length} · ${SUBJECTS[sess.subject].name}</div>
+      <h2 style="margin:0.7rem 0">${q.q}</h2>
+      <div class="progress-track" style="margin-bottom:0.9rem"><div class="progress-fill" style="width:${(sess.idx / sess.questions.length) * 100}%"></div></div>
+      <div id="options"></div>
+      <div id="feedback"></div>
+    </div>`);
+
+    const opts = card.querySelector("#options");
+    q.options.forEach((opt, i) => {
+      const b = el(`<button class="quiz-option">${opt}</button>`);
+      b.onclick = () => {
+        Quiz.answer(i);
+        const correct = i === q.answer;
+        card.querySelectorAll(".quiz-option").forEach((o, j) => {
+          o.disabled = true;
+          if (j === q.answer) o.classList.add("correct");
+          else if (j === i && !correct) o.classList.add("wrong");
+        });
+        card.querySelector("#feedback").innerHTML = `
+          <div class="feedback-box ${correct ? "good" : "bad"}">
+            <strong>${correct ? "✅ Bravo !" : "❌ Presque…"}</strong>
+            <p>${q.explain}</p>
+            ${!correct ? "" : ""}
+            <button class="btn small" style="margin-top:0.5rem" id="next-btn">Suivant →</button>
+          </div>`;
+        card.querySelector("#next-btn").onclick = () => { Quiz.next(); };
+      };
+      opts.append(b);
+    });
+    wrap.append(card);
+
+    const speakBtn = el(`<button class="btn secondary small" style="margin-bottom:1rem">🔊 Lire la question</button>`);
+    speakBtn.onclick = () => TTS.speak(q.q);
+    wrap.prepend(speakBtn);
+    return wrap;
+  }
+
+  async function photosView() {
+    const wrap = el(`<div></div>`);
+    wrap.append(el(`
+      <div class="section-title">
+        <h1>📸 Mes photos de cours</h1>
+      </div>
+      <div class="card">
+        <p class="muted">Prends en photo un exercice, une correction, un cours de tableau. L'app les classe par matière, et tu suis leur statut : à revoir → en correction → validé.</p>
+        <label class="btn" style="display:inline-block;margin-top:0.6rem">📷 Ajouter une photo<input type="file" id="photo-input" accept="image/*" capture="environment"></label>
+        <div id="photo-form" class="hidden" style="margin-top:0.8rem">
+          <img id="preview" style="max-width:100%;border-radius:12px;margin-bottom:0.6rem">
+          <label class="field-label">Matière</label>
+          <select id="photo-subject">${Object.entries(SUBJECTS).map(([id, s]) => `<option value="${id}">${s.emoji} ${s.name}</option>`).join("")}</select>
+          <label class="field-label">Titre / description</label>
+          <input type="text" id="photo-title" placeholder="Ex : Exercice RLC, khôlle du…">
+          <button class="btn success" style="margin-top:0.7rem" id="save-photo">Enregistrer (+10 XP)</button>
+        </div>
+      </div>
+      <div id="photo-list"></div>`));
+
+    const input = wrap.querySelector("#photo-input");
+    let pendingData = null;
+    input.onchange = () => {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        pendingData = e.target.result;
+        wrap.querySelector("#preview").src = pendingData;
+        wrap.querySelector("#photo-form").classList.remove("hidden");
+      };
+      reader.readAsDataURL(file);
+    };
+    wrap.querySelector("#save-photo").onclick = async () => {
+      if (!pendingData) return;
+      const subject = wrap.querySelector("#photo-subject").value;
+      const title = wrap.querySelector("#photo-title").value;
+      await Correction.addPhoto(pendingData, subject, title);
+      toast("Photo enregistrée ! +10 XP");
+      go("photos");
+    };
+
+    const list = wrap.querySelector("#photo-list");
+    const photos = await Store.getPhotos();
+    photosCache = photos;
+    if (!photos.length) {
+      list.append(el(`<div class="card"><p class="muted">Aucune photo pour l'instant. La première vaut +10 XP 😉</p></div>`));
+    } else {
+      photos.sort((a, b) => b.created - a.created);
+      const grid = el(`<div class="photo-grid"></div>`);
+      photos.forEach((p) => {
+        const st = Store.state.photoStatus[p.id] || { status: "todo" };
+        const statusClass = st.status === "done" ? "done" : st.status === "review" ? "review" : "todo";
+        const t = el(`<div class="photo-thumb">
+          <img src="${p.dataUrl}" alt="${p.title}">
+          <span class="status-badge ${statusClass}">${Correction.STATUSES[st.status]}</span>
+        </div>`);
+        t.onclick = () => go("photo", p);
+        grid.append(t);
+      });
+      list.append(grid);
+    }
+    return wrap;
+  }
+
+  function photoView(photo) {
+    const wrap = el(`<div></div>`);
+    const st = Store.state.photoStatus[photo.id] || { status: "todo", corrections: [] };
+    wrap.append(el(`
+      <div class="section-title">
+        <h1>${SUBJECTS[photo.subject].emoji} ${photo.title}</h1>
+        <button class="back-link" id="back">← Photos</button>
+      </div>
+      <div class="card"><img src="${photo.dataUrl}" style="width:100%;border-radius:12px"></div>
+      <div class="card">
+        <h3>Statut : ${Correction.STATUSES[st.status]}</h3>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.6rem">
+          <button class="btn small secondary" data-set="todo">À revoir</button>
+          <button class="btn small secondary" data-set="review">En correction</button>
+          <button class="btn small success" data-set="done">Validé (+25 XP)</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>📝 Mes notes de correction</h3>
+        <p class="muted">Note ce qui faut retenir, l'erreur à ne plus refaire, le point d'intention.</p>
+        <div id="corr-list"></div>
+        <textarea id="corr-input" placeholder="Ex : ne pas oublier la loi des mailles avant de calculer U…"></textarea>
+        <button class="btn small" style="margin-top:0.5rem" id="add-corr">Ajouter la note (+10 XP)</button>
+      </div>
+      <div class="card">
+        <h3>✅ Checklist d'auto-correction</h3>
+        ${Correction.CHECKLIST.map((c) => `<label style="display:flex;gap:0.5rem;align-items:center;margin:0.4rem 0"><input type="checkbox" class="chk"> <span>${c}</span></label>`).join("")}
+      </div>`));
+
+    wrap.querySelector("#back").onclick = () => go("photos");
+    wrap.querySelectorAll("[data-set]").forEach((b) => {
+      b.onclick = () => { Correction.setStatus(photo.id, b.dataset.set); toast("Statut mis à jour"); render(); };
+    });
+
+    const list = wrap.querySelector("#corr-list");
+    (st.corrections || []).forEach((c) => {
+      list.append(el(`<div class="intention-point"><span class="tag">Note</span><div>${escapeHtml(c.note)}</div></div>`));
+    });
+    wrap.querySelector("#add-corr").onclick = () => {
+      const v = wrap.querySelector("#corr-input").value.trim();
+      if (!v) return;
+      Correction.addCorrectionNote(photo.id, v);
+      toast("Note ajoutée ! +10 XP");
+      render();
+    };
+    return wrap;
+  }
+
+  let kholleState = null;
+
+  function kholleStart(subject) {
+    const bank = KHOLLE_BANK[subject] || [];
+    const q = bank[Math.floor(Math.random() * bank.length)];
+    kholleState = { subject, q, seconds: 20 * 60, running: true, revealed: false, done: false };
+    if (kholleTimer) clearInterval(kholleTimer);
+    kholleTimer = setInterval(() => {
+      if (kholleState && kholleState.running && !kholleState.done) {
+        kholleState.seconds--;
+        const t = document.querySelector("#kholle-chrono");
+        if (t) {
+          const m = Math.floor(Math.max(0, kholleState.seconds) / 60);
+          const s = Math.max(0, kholleState.seconds) % 60;
+          t.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+          if (kholleState.seconds <= 0) { t.style.color = "var(--danger)"; kholleState.running = false; toast("⏰ Temps écoulé ! Passe à l'auto-évaluation."); }
+        }
+      }
+    }, 1000);
+    render();
+  }
+
+  function kholleView() {
+    const wrap = el(`<div></div>`);
+    if (!kholleState) {
+      wrap.append(el(`
+        <div class="section-title"><h1>🎤 S'entraîner aux khôlles</h1></div>
+        <div class="card">
+          <p class="muted">Un sujet d'oral au hasard, 20 minutes de chrono, puis tu compares avec les attendus du colleur. Comme en vrai khôlle, mais sans pression.</p>
+          <label class="field-label">Choisis ta matière</label>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.4rem">
+            ${Object.entries(SUBJECTS).filter(([id]) => KHOLLE_BANK[id] && KHOLLE_BANK[id].length).map(([id, s]) => `<button class="btn secondary" data-kh="${id}">${s.emoji} ${s.name}</button>`).join("")}
+          </div>
+        </div>
+        <div class="card">
+          <h3>💡 Méthode de khôlle (à lire une fois)</h3>
+          <div class="intention-point"><span class="tag">Réflexe 1</span><div>Annonce ton plan à voix haute avant de commencer : le prof évalue la structure autant que le contenu.</div></div>
+          <div class="intention-point"><span class="tag">Réflexe 2</span><div>Écris proprement les notations et définis-les. Une notation non définie = une perte de points assurée.</div></div>
+          <div class="intention-point"><span class="tag">Réflexe 3</span><div>Si tu bloques : dis ce que tu ferais (« je chercherais la limite par encadrement »). Le raisonnement compte.</div></div>
+        </div>`));
+      wrap.querySelectorAll("[data-kh]").forEach((b) => {
+        b.onclick = () => kholleStart(b.dataset.kh);
+      });
+      return wrap;
+    }
+
+    const { subject, q, seconds, running, revealed, done } = kholleState;
+    const m = Math.floor(Math.max(0, seconds) / 60), s = Math.max(0, seconds) % 60;
+    const vid = videoUrlFor(q.chapter);
+
+    const card = el(`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem">
+        <div class="chip">${SUBJECTS[subject].emoji} ${SUBJECTS[subject].name} · ${q.chapter}</div>
+        <div style="font-size:1.4rem;font-weight:800" id="kholle-chrono">${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}</div>
+      </div>
+      <h2 style="margin:0.8rem 0">${q.prompt}</h2>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button class="btn small secondary" id="kh-pause">${running ? "⏸ Pause" : "▶️ Reprendre"}</button>
+        <button class="btn small" id="kh-reveal">👀 Voir les attendus</button>
+        <button class="btn small danger" id="kh-skip">Autre sujet</button>
+      </div>
+      <div id="kh-reveal-zone"></div>
+      <div id="kh-eval-zone"></div>
+    </div>`);
+
+    card.querySelector("#kh-pause").onclick = () => { kholleState.running = !kholleState.running; render(); };
+    card.querySelector("#kh-skip").onclick = () => kholleStart(subject);
+    card.querySelector("#kh-reveal").onclick = () => {
+      kholleState.revealed = true;
+      const zone = card.querySelector("#kh-reveal-zone");
+      zone.innerHTML = `
+        <h3 style="margin-top:1rem">✅ Ce que le colleur attend</h3>
+        ${q.expected.map((e) => `<div class="intention-point"><span class="tag">Attendu</span><div>${e}</div></div>`).join("")}
+        <h3 style="margin-top:0.8rem">💡 Réflexes de khôlleux</h3>
+        ${q.tips.map((t) => `<div class="intention-point"><span class="tag">Tip</span><div>${t}</div></div>`).join("")}
+        ${vid ? `<a class="btn secondary small" style="display:inline-block;margin-top:0.6rem;text-decoration:none" href="${vid}" target="_blank" rel="noopener">🎬 Vidéo pour approfondir ce chapitre</a>` : ""}
+        <h3 style="margin-top:1rem">Auto-évaluation (comme une vraie note de khôlle)</h3>
+        <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+          ${[1, 2, 3, 4, 5].map((n) => `<button class="btn small secondary" data-note="${n}">${n}/5</button>`).join("")}
+        </div>
+        <p class="muted" style="margin-top:0.4rem">5 = exposé impeccable · 3 = correct avec aides · 1 = pas réussi</p>`;
+      zone.querySelectorAll("[data-note]").forEach((b) => {
+        b.onclick = () => {
+          const note = parseInt(b.dataset.note, 10);
+          SRS.review(q.id, note);
+          Gamify.addXp(note >= 3 ? 30 : 10, "Khôlle faite");
+          Gamify.touchStreak();
+          Gamify.checkBadges();
+          Store.save();
+          toast(note >= 4 ? "🎉 Excellente khôlle ! +30 XP" : "Khôlle enregistrée. Les points faibles reviendront !");
+          if (note >= 4) App.confetti();
+          kholleState = null;
+          if (kholleTimer) { clearInterval(kholleTimer); kholleTimer = null; }
+          go("kholle");
+        };
+      });
+      TTS.speak("Voici les attendus du colleur.");
+    };
+    wrap.append(card);
+    return wrap;
+  }
+
+  function progressView() {
+    const wrap = el(`<div></div>`);
+    wrap.append(el(`<h1>📈 Mon évolution</h1>`));
+
+    const statsCard = el(`<div class="card">
+      <div class="stat-row">
+        <div class="stat-box"><div class="val">${Store.state.xp}</div><div class="label">XP</div></div>
+        <div class="stat-box"><div class="val">${Store.state.streak.count}</div><div class="label">Série (jours)</div></div>
+        <div class="stat-box"><div class="val">${Store.state.badges.length}</div><div class="label">Badges</div></div>
+      </div>
+    </div>`);
+    wrap.append(statsCard);
+
+    const perSubject = el(`<div class="card"><h3>Réussite par matière</h3><div id="subj-stats"></div></div>`);
+    const cont = perSubject.querySelector("#subj-stats");
+    Object.entries(SUBJECTS).forEach(([id, s]) => {
+      const q = Store.state.quizStats[id];
+      const pct = q && q.attempts ? Math.round((q.correct / q.attempts) * 100) : 0;
+      cont.append(el(`
+        <div style="margin:0.6rem 0">
+          <div style="display:flex;justify-content:space-between;font-size:0.85rem">
+            <span>${s.emoji} ${s.name}</span><span class="muted">${q ? `${q.correct}/${q.attempts} (${pct}%)` : "pas encore de quiz"}</span>
+          </div>
+          <div class="progress-track" style="margin-top:0.25rem"><div class="progress-fill" style="width:${pct}%"></div></div>
+        </div>`));
+    });
+    wrap.append(perSubject);
+
+    const badges = el(`<div class="card"><h3>🏅 Badges</h3><div class="badge-grid"></div></div>`);
+    const bg = badges.querySelector(".badge-grid");
+    Gamify.BADGES.forEach((b) => {
+      const owned = Store.state.badges.includes(b.id);
+      bg.append(el(`<div class="badge-item ${owned ? "" : "locked"}"><span>${b.icon}</span>${b.label}</div>`));
+    });
+    wrap.append(badges);
+
+    const log = Store.state.activityLog.slice(0, 12);
+    if (log.length) {
+      const logCard = el(`<div class="card"><h3>🕒 Activité récente</h3>${log.map((l) => `<p class="muted" style="margin:0.3rem 0">${new Date(l.t).toLocaleDateString("fr-FR")} · +${l.amount} XP · ${l.reason}</p>`).join("")}</div>`);
+      wrap.append(logCard);
+    }
+    return wrap;
+  }
+
+  function settingsView() {
+    const p = Store.state.profile;
+    const wrap = el(`<div>
+      <h1>⚙️ Réglages</h1>
+      <div class="card">
+        <div class="setting-row">
+          <div><strong>Mode dyslexie</strong><p class="muted">Police adaptée, interlignage large, espacement des lettres.</p></div>
+          <label class="switch"><input type="checkbox" id="set-dys" ${p.dyslexiaMode ? "checked" : ""}><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div><strong>Lecture à voix haute</strong><p class="muted">L'app lit les questions et les feedbacks (double canal visuel + auditif).</p></div>
+          <label class="switch"><input type="checkbox" id="set-tts" ${p.ttsEnabled ? "checked" : ""}><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div><strong>Taille du texte</strong><p class="muted">Agrandis si tu lis mieux en grand.</p></div>
+          <div><button class="btn small secondary" id="font-minus">A−</button> <button class="btn small secondary" id="font-plus">A+</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>À propos des méthodes</h3>
+        <p class="muted">Cette app s'appuie sur : répétition espacée (Ebbinghaus, SM-2), retrieval practice ("Make It Stick", Brown/Roediger/McDaniel), feedback immédiat (Hattie & Timperley), double codage visuel + auditif (Paivio), et recommandations typographiques pour la dyslexie (British Dyslexia Association).</p>
+      </div>
+      <div class="card">
+        <button class="btn danger small" id="reset-all">⚠️ Réinitialiser toutes mes données</button>
+      </div>
+    </div>`);
+
+    wrap.querySelector("#set-dys").onchange = (e) => { Store.state.profile.dyslexiaMode = e.target.checked; Store.save(); applySettings(); };
+    wrap.querySelector("#set-tts").onchange = (e) => { Store.state.profile.ttsEnabled = e.target.checked; Store.save(); applySettings(); };
+    wrap.querySelector("#font-plus").onclick = () => { p.fontScale = Math.min(1.4, p.fontScale + 0.08); Store.save(); applySettings(); };
+    wrap.querySelector("#font-minus").onclick = () => { p.fontScale = Math.max(0.9, p.fontScale - 0.08); Store.save(); applySettings(); };
+    wrap.querySelector("#reset-all").onclick = () => {
+      if (confirm("Tout effacer ? XP, badges, photos, statistiques. Irréversible.")) { Store.reset(); go("home"); }
+    };
+    return wrap;
+  }
+
+  // ===== Utilitaires =====
+  function escapeHtml(s) { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+
+  function confetti() {
+    const c = $("#confetti");
+    const colors = ["#6c5ce7", "#ffd166", "#2ecc71", "#ff6b6b", "#4fc3f7"];
+    for (let i = 0; i < 60; i++) {
+      const p = document.createElement("div");
+      p.style.cssText = `position:absolute;width:8px;height:8px;left:50%;top:40%;background:${colors[i % colors.length]};border-radius:${Math.random() > 0.5 ? "50%" : "2px"};transition:all 1.2s ease-out;opacity:1;`;
+      c.append(p);
+      requestAnimationFrame(() => {
+        p.style.transform = `translate(${(Math.random() - 0.5) * 600}px, ${Math.random() * 500 + 100}px) rotate(${Math.random() * 720}deg)`;
+        p.style.opacity = "0";
+      });
+      setTimeout(() => p.remove(), 1400);
+    }
+  }
+
+  return { init, render, go, toast, confetti };
+})();
+
+window.addEventListener("DOMContentLoaded", App.init);
